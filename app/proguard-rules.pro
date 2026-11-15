@@ -1,0 +1,2 @@
+-keep class io.github.hassinalhadi.ninja.** { *; }
+-keep class top.canyie.pine.** { *; }
