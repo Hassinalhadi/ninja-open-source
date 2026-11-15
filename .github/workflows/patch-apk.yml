@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       apk_url:
-        description: "Optional direct URL to orgnail.apk (if not placed in original/orgnail.apk)"
+        description: "Optional direct URL to orgnail.apk"
         required: false
         default: ""
 
@@ -39,10 +39,12 @@ jobs:
         run: |
           if [ -n "${{ github.event.inputs.apk_url }}" ]; then
             wget -q "${{ github.event.inputs.apk_url }}" -O target.apk
+          elif [ -f "orgnail.apk" ]; then
+            cp orgnail.apk target.apk
           elif [ -f "original/orgnail.apk" ]; then
             cp original/orgnail.apk target.apk
           else
-            echo "No original/orgnail.apk or apk_url provided; uploading mod-only APK."
+            echo "No orgnail.apk or apk_url provided; uploading mod-only APK."
             exit 0
           fi
 
