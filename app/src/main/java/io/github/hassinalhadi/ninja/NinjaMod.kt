@@ -17,6 +17,7 @@ import io.github.hassinalhadi.ninja.hooks.DisplayOrderNumberHook
 import io.github.hassinalhadi.ninja.hooks.FakeGpsHook
 import io.github.hassinalhadi.ninja.hooks.HookUtils
 import io.github.hassinalhadi.ninja.hooks.ShowSupportHook
+import io.github.hassinalhadi.ninja.hooks.SignatureHook
 import io.github.hassinalhadi.ninja.ui.ControlPanelDialog
 import top.canyie.pine.Pine
 import top.canyie.pine.PineConfig
@@ -35,6 +36,8 @@ object NinjaMod {
             PineConfig.debug = false
             PineConfig.debuggable = false
             Pine.ensureInitialized()
+
+            SignatureHook.install(app)
 
             val cl = app.classLoader
             CustomerLocationHook.install(app, cl)

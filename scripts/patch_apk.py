@@ -1,10 +1,51 @@
+import hashlib
 import re
 import shutil
+import struct
 import sys
 from pathlib import Path
 
 
 INJECT_CALL = "    invoke-static {p0}, Lio/github/hassinalhadi/ninja/NinjaMod;->init(Landroid/app/Application;)V\n"
+
+
+def extract_v2_cert(apk_path: Path) -> bytes | None:
+    data = apk_path.read_bytes()
+    eocd_off = data.rfind(b"PK\x05\x06")
+    if eocd_off < 0:
+        return None
+    cd_offset = struct.unpack_from("<I", data, eocd_off + 16)[0]
+    magic_off = cd_offset - 16
+    if magic_off < 24 or data[magic_off:cd_offset] != b"APK Sig Block 42":
+        return None
+    block_size = struct.unpack_from("<Q", data, cd_offset - 24)[0]
+    pos = cd_offset - 8 - block_size + 8
+    while pos < cd_offset - 24:
+        pair_len = struct.unpack_from("<Q", data, pos)[0]
+        pair_id = struct.unpack_from("<I", data, pos + 8)[0]
+        if pair_id in (0x7109871A, 0xF05368C0):
+            val = data[pos + 12 : pos + 8 + pair_len]
+            sd_len = struct.unpack_from("<I", val, 8)[0]
+            sd = val[12 : 12 + sd_len]
+            dig_len = struct.unpack_from("<I", sd, 0)[0]
+            certs_off = 4 + dig_len
+            first_cert_len = struct.unpack_from("<I", sd, certs_off + 4)[0]
+            return sd[certs_off + 8 : certs_off + 8 + first_cert_len]
+        pos += 8 + pair_len
+    return None
+
+
+def embed_original_cert(target_apk: Path, target_dir: Path) -> None:
+    cert_bytes = extract_v2_cert(target_apk)
+    if not cert_bytes:
+        print("[!] Could not extract v2/v3 cert from target APK")
+        return
+    assets_dir = target_dir / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    out_cert = assets_dir / "ninja_orig_cert.der"
+    out_cert.write_bytes(cert_bytes)
+    sha256 = hashlib.sha256(cert_bytes).hexdigest()
+    print(f"[+] Embedded original cert ({len(cert_bytes)} bytes, SHA-256: {sha256})")
 
 
 def find_next_smali_dir(target_dir: Path) -> Path:
@@ -61,7 +102,6 @@ def inject_android_app(target_dir: Path) -> None:
         print(f"[=] Already injected in {app_smali}")
         return
 
-    # 1. onCreate()V موجودة مع invoke-super بأي سجل
     pattern_super = re.compile(
         r"(\.method\s+[^\n]*\bonCreate\(\)V\b.*?invoke-super\s+\{[^}]+\},\s+[^\n]+->onCreate\(\)V\s*\n)",
         re.DOTALL,
@@ -72,7 +112,6 @@ def inject_android_app(target_dir: Path) -> None:
         print(f"[+] Injected NinjaMod.init after invoke-super in {app_smali}")
         return
 
-    # 2. onCreate()V موجودة بدون invoke-super -> الحقن قبل return-void
     pattern_ret = re.compile(
         r"(\.method\s+[^\n]*\bonCreate\(\)V\b.*?)(\s+return-void\s*\n\.end method)",
         re.DOTALL,
@@ -83,7 +122,6 @@ def inject_android_app(target_dir: Path) -> None:
         print(f"[+] Injected NinjaMod.init before return-void in {app_smali}")
         return
 
-    # 3. onCreate()V غير موجودة في AndroidApp -> إضافتها تلقائياً
     super_match = re.search(r"^\.super\s+(\S+)", content, re.MULTILINE)
     if not super_match:
         raise RuntimeError(f"Could not find .super directive in {app_smali}")
@@ -102,12 +140,16 @@ def inject_android_app(target_dir: Path) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) != 3:
-        print("Usage: python3 patch_apk.py <mod_decoded_dir> <target_decoded_dir>")
+    if len(sys.argv) < 3:
+        print("Usage: python3 patch_apk.py <mod_decoded_dir> <target_decoded_dir> [target_apk]")
         sys.exit(1)
 
     mod_dir = Path(sys.argv[1])
     target_dir = Path(sys.argv[2])
+    target_apk = Path(sys.argv[3]) if len(sys.argv) >= 4 else None
+
+    if target_apk and target_apk.exists():
+        embed_original_cert(target_apk, target_dir)
 
     copy_mod_smali(mod_dir, target_dir)
     copy_native_libs(mod_dir, target_dir)
