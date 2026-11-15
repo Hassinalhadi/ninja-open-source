@@ -57,13 +57,13 @@ jobs:
       - name: Inject NinjaMod into Target APK
         if: hashFiles('target.apk') != ''
         run: |
-          python3 scripts/patch_apk.py mod_decoded target_decoded
+          python3 scripts/patch_apk.py mod_decoded target_decoded target.apk
 
       - name: Rebuild, Zipalign & Sign Patched APK
         if: hashFiles('target.apk') != ''
         run: |
           java -jar apktool.jar b target_decoded -o raw_unsigned.apk
-          python3 - << 'EOF'
+          python3 - << 'PY'
           import zipfile
           with zipfile.ZipFile("raw_unsigned.apk", "r") as zin, \
                zipfile.ZipFile("unsigned.apk", "w") as zout:
@@ -73,7 +73,7 @@ jobs:
                       item.filename == "resources.arsc" or item.filename.endswith(".so")
                   ) else zipfile.ZIP_DEFLATED
                   zout.writestr(item, data, compress_type=compress)
-          EOF
+          PY
           BUILD_TOOLS_DIR=$(ls -d ${ANDROID_HOME}/build-tools/* | sort -V | tail -n 1)
           "${BUILD_TOOLS_DIR}/zipalign" -p -f 4 unsigned.apk aligned.apk
           keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=NinjaOpenSource,O=Android,C=US"
