@@ -216,14 +216,14 @@ def inject_android_app(target_dir: Path) -> None:
         print(f"[+] Injected NinjaMod.init after invoke-super in {app_smali}")
         return
 
-    pattern_ret = re.compile(
-        r"(\.method\s+[^\n]*\bonCreate\(\)V\b.*?)(\s+return-void\s*\n\.end method)",
-        re.DOTALL,
+    pattern_start = re.compile(
+        r"(\.method\s+[^\n]*\bonCreate\(\)V\b[^\n]*\n(?:[ \t]*\.(?:locals|registers)\s+\d+\s*\n)(?:[ \t]*\.prologue\s*\n)?)",
+        re.MULTILINE,
     )
-    new_content, count = pattern_ret.subn(r"\1\n" + INJECT_CALL + r"\2", content, count=1)
+    new_content, count = pattern_start.subn(r"\1\n" + INJECT_CALL, content, count=1)
     if count > 0:
         app_smali.write_text(new_content, encoding="utf-8")
-        print(f"[+] Injected NinjaMod.init before return-void in {app_smali}")
+        print(f"[+] Injected NinjaMod.init at start of existing onCreate()V in {app_smali}")
         return
 
     super_match = re.search(r"^\.super\s+(\S+)", content, re.MULTILINE)
