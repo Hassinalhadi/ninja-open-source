@@ -23,7 +23,7 @@ object SignatureHook {
     @SuppressLint("PrivateApi")
     fun install(app: Application) {
         val certBytes = runCatching {
-            app.assets.open("ninja_orig_cert.der").use { it.readBytes() }
+            DiagnosticLogger.readAssetBytes(app, "ninja_orig_cert.der")
         }.getOrElse {
             DiagnosticLogger.log("SIG_ERR", "Cannot open ninja_orig_cert.der: ${it.message}")
             return
