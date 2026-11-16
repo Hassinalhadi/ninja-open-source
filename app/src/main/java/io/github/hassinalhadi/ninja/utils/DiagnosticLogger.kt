@@ -50,6 +50,9 @@ object DiagnosticLogger {
         log("INIT", "logFile=${logFile?.absolutePath ?: "none"}")
 
         registerActivityLogButton(app)
+    }
+
+    fun installHooks(app: Application) {
         installDialogAndIntegrityObservers(app)
     }
 
@@ -77,12 +80,14 @@ object DiagnosticLogger {
         app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
                 log("ACT", "onCreate: ${activity.javaClass.name}")
+                activity.window?.decorView?.post { attachLogButton(activity) }
             }
 
             override fun onActivityStarted(activity: Activity) {}
 
             override fun onActivityResumed(activity: Activity) {
-                activity.runOnUiThread { attachLogButton(activity) }
+                log("ACT", "onResume: ${activity.javaClass.name}")
+                activity.window?.decorView?.post { attachLogButton(activity) }
             }
 
             override fun onActivityPaused(activity: Activity) {}
@@ -94,8 +99,8 @@ object DiagnosticLogger {
 
     private fun attachLogButton(activity: Activity) {
         runCatching {
-            val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
-            if (content.findViewWithTag<TextView>(LOG_BTN_TAG) != null) return
+            val decor = activity.window?.decorView as? ViewGroup ?: return
+            if (decor.findViewWithTag<TextView>(LOG_BTN_TAG) != null) return
 
             val density = activity.resources.displayMetrics.density
             val btn = TextView(activity).apply {
@@ -111,7 +116,7 @@ object DiagnosticLogger {
                     setColor(0xCCB91C1C.toInt())
                     setStroke((1.5f * density).toInt(), Color.WHITE)
                 }
-                elevation = 20f
+                elevation = 50f
                 setOnClickListener { showLogDialog(activity) }
             }
 
@@ -124,7 +129,9 @@ object DiagnosticLogger {
                 marginStart = (12 * density).toInt()
             }
 
-            content.addView(btn, lp)
+            decor.addView(btn, lp)
+        }.onFailure {
+            Log.w(TAG, "attachLogButton failed: ${it.message}")
         }
     }
 
@@ -159,7 +166,6 @@ object DiagnosticLogger {
     }
 
     private fun installDialogAndIntegrityObservers(app: Application) {
-        // 1. Capture stack trace whenever any Dialog is shown
         runCatching {
             val showMethod = Dialog::class.java.getDeclaredMethod("show")
             Pine.hook(showMethod, object : MethodHook() {
@@ -177,7 +183,6 @@ object DiagnosticLogger {
             log("HOOK_ERR", "Dialog.show hook failed: ${it.message}")
         }
 
-        // 2. Observe Samurai integrity checker class (ua.d) if present
         runCatching {
             val cl = app.classLoader
             val uaD = Class.forName("ua.d", false, cl)
@@ -198,7 +203,6 @@ object DiagnosticLogger {
             log("HOOK_ERR", "ua.d observer skipped: ${it.message}")
         }
 
-        // 3. Log actual PackageInfo / Cert SHA-256 seen by app
         runCatching {
             val assetSha = runCatching {
                 val bytes = app.assets.open("ninja_orig_cert.der").use { it.readBytes() }

@@ -33,29 +33,46 @@ object NinjaMod {
     @JvmStatic
     fun init(app: Application) {
         if (!initialized.compareAndSet(false, true)) return
+
+        // Initialize logger FIRST so any Pine or hook error is always captured
         runCatching {
+            DiagnosticLogger.init(app)
+        }.onFailure {
+            Log.e(TAG, "DiagnosticLogger init failed: ${it.message}", it)
+        }
+
+        val pineOk = runCatching {
             PineConfig.debug = false
             PineConfig.debuggable = false
             Pine.ensureInitialized()
+            DiagnosticLogger.log("INIT", "Pine.ensureInitialized() OK")
+            true
+        }.getOrElse {
+            DiagnosticLogger.log("INIT_ERR", "Pine.ensureInitialized() FAILED: ${it.stackTraceToString()}")
+            Log.e(TAG, "Pine init failed: ${it.message}", it)
+            false
+        }
 
-            DiagnosticLogger.init(app)
-            SignatureHook.install(app)
+        if (pineOk) {
+            runCatching { DiagnosticLogger.installHooks(app) }
+                .onFailure { DiagnosticLogger.log("INIT_ERR", "DiagnosticLogger.installHooks failed: ${it.message}") }
+
+            runCatching { SignatureHook.install(app) }
+                .onFailure { DiagnosticLogger.log("INIT_ERR", "SignatureHook failed: ${it.message}") }
 
             val cl = app.classLoader
-            CustomerLocationHook.install(app, cl)
-            ShowSupportHook.install(app, cl)
-            DisplayOrderNumberHook.install(app, cl)
-            FakeGpsHook.install(app, cl)
-            AutoRefreshHook.install(app, cl)
-            AutoClickerHook.install(app, cl)
+            runCatching { CustomerLocationHook.install(app, cl) }
+            runCatching { ShowSupportHook.install(app, cl) }
+            runCatching { DisplayOrderNumberHook.install(app, cl) }
+            runCatching { FakeGpsHook.install(app, cl) }
+            runCatching { AutoRefreshHook.install(app, cl) }
+            runCatching { AutoClickerHook.install(app, cl) }
 
-            injectFloatingPanelButton(cl)
-            DiagnosticLogger.log("INIT", "NinjaMod initialized successfully")
-            Log.i(TAG, "NinjaMod initialized successfully")
-        }.onFailure {
-            DiagnosticLogger.log("INIT_ERR", "NinjaMod init failed: ${it.stackTraceToString()}")
-            Log.e(TAG, "NinjaMod init failed: ${it.message}", it)
+            runCatching { injectFloatingPanelButton(cl) }
         }
+
+        DiagnosticLogger.log("INIT", "NinjaMod.init finished (pineOk=$pineOk)")
+        Log.i(TAG, "NinjaMod.init finished (pineOk=$pineOk)")
     }
 
     private fun injectFloatingPanelButton(classLoader: ClassLoader) {
