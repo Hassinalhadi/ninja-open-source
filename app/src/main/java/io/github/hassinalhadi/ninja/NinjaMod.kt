@@ -19,6 +19,7 @@ import io.github.hassinalhadi.ninja.hooks.HookUtils
 import io.github.hassinalhadi.ninja.hooks.ShowSupportHook
 import io.github.hassinalhadi.ninja.hooks.SignatureHook
 import io.github.hassinalhadi.ninja.ui.ControlPanelDialog
+import io.github.hassinalhadi.ninja.utils.DiagnosticLogger
 import top.canyie.pine.Pine
 import top.canyie.pine.PineConfig
 import top.canyie.pine.callback.MethodHook
@@ -37,6 +38,7 @@ object NinjaMod {
             PineConfig.debuggable = false
             Pine.ensureInitialized()
 
+            DiagnosticLogger.init(app)
             SignatureHook.install(app)
 
             val cl = app.classLoader
@@ -48,8 +50,10 @@ object NinjaMod {
             AutoClickerHook.install(app, cl)
 
             injectFloatingPanelButton(cl)
+            DiagnosticLogger.log("INIT", "NinjaMod initialized successfully")
             Log.i(TAG, "NinjaMod initialized successfully")
         }.onFailure {
+            DiagnosticLogger.log("INIT_ERR", "NinjaMod init failed: ${it.stackTraceToString()}")
             Log.e(TAG, "NinjaMod init failed: ${it.message}", it)
         }
     }

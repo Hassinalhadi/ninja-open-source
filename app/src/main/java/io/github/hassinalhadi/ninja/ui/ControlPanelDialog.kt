@@ -12,6 +12,7 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import io.github.hassinalhadi.ninja.prefs.NinjaPrefs
+import io.github.hassinalhadi.ninja.utils.DiagnosticLogger
 
 object ControlPanelDialog {
     fun show(activity: Activity) {
@@ -75,6 +76,12 @@ object ControlPanelDialog {
             }
         }
         root.addView(btnOpenSupport)
+
+        val btnDiagLog = Button(ctx).apply {
+            text = "View Diagnostic Log"
+            setOnClickListener { DiagnosticLogger.showLogDialog(ctx) }
+        }
+        root.addView(btnDiagLog)
 
         val scroll = ScrollView(ctx).apply { addView(root) }
 

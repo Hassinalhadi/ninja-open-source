@@ -1,6 +1,7 @@
 package io.github.hassinalhadi.ninja.hooks
 
 import android.util.Log
+import io.github.hassinalhadi.ninja.utils.DiagnosticLogger
 import top.canyie.pine.Pine
 import top.canyie.pine.callback.MethodHook
 
@@ -15,16 +16,20 @@ object HookUtils {
         methodName: String,
         callback: MethodHook
     ) {
-        clazz.declaredMethods
-            .filter { it.name == methodName }
-            .forEach { method ->
-                runCatching {
-                    method.isAccessible = true
-                    Pine.hook(method, callback)
-                }.onFailure {
-                    Log.w(TAG, "Failed to hook ${clazz.name}.$methodName: ${it.message}")
-                }
+        val matches = clazz.declaredMethods.filter { it.name == methodName }
+        if (matches.isEmpty()) {
+            DiagnosticLogger.log("HOOK_WARN", "No method ${clazz.name}.$methodName")
+        }
+        matches.forEach { method ->
+            runCatching {
+                method.isAccessible = true
+                Pine.hook(method, callback)
+                DiagnosticLogger.log("HOOK", "OK ${clazz.simpleName}.$methodName(${method.parameterTypes.joinToString(",") { it.simpleName }})")
+            }.onFailure {
+                Log.w(TAG, "Failed to hook ${clazz.name}.$methodName: ${it.message}")
+                DiagnosticLogger.log("HOOK_ERR", "FAIL ${clazz.simpleName}.$methodName: ${it.message}")
             }
+        }
     }
 
     fun hookSingle(
@@ -37,8 +42,10 @@ object HookUtils {
             val method = clazz.getDeclaredMethod(methodName, *paramTypes)
             method.isAccessible = true
             Pine.hook(method, callback)
+            DiagnosticLogger.log("HOOK", "OK ${clazz.simpleName}.$methodName")
         }.onFailure {
             Log.w(TAG, "Failed to hook ${clazz.name}.$methodName: ${it.message}")
+            DiagnosticLogger.log("HOOK_ERR", "FAIL ${clazz.simpleName}.$methodName: ${it.message}")
         }
     }
 }

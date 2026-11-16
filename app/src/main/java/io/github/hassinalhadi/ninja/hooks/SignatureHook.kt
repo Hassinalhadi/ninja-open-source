@@ -7,6 +7,7 @@ import android.content.pm.Signature
 import android.content.pm.SigningInfo
 import android.os.Build
 import android.util.Log
+import io.github.hassinalhadi.ninja.utils.DiagnosticLogger
 import top.canyie.pine.Pine
 import top.canyie.pine.callback.MethodHook
 import java.io.ByteArrayInputStream
@@ -23,7 +24,10 @@ object SignatureHook {
     fun install(app: Application) {
         val certBytes = runCatching {
             app.assets.open("ninja_orig_cert.der").use { it.readBytes() }
-        }.getOrNull() ?: return
+        }.getOrElse {
+            DiagnosticLogger.log("SIG_ERR", "Cannot open ninja_orig_cert.der: ${it.message}")
+            return
+        }
 
         val sig = Signature(certBytes)
         origSignature = sig
@@ -32,6 +36,7 @@ object SignatureHook {
                 .generateCertificate(ByteArrayInputStream(certBytes))
         }.getOrNull()
         val targetPkg = app.packageName
+        DiagnosticLogger.log("SIG", "Loaded orig cert (${certBytes.size}B) sha256=${DiagnosticLogger.sha256Hex(certBytes)}")
 
         runCatching {
             val apmClass = Class.forName("android.app.ApplicationPackageManager")
@@ -40,9 +45,11 @@ object SignatureHook {
                 override fun afterCall(callFrame: Pine.CallFrame) {
                     val info = callFrame.result as? PackageInfo ?: return
                     if (info.packageName != targetPkg) return
+                    val hadSigs = info.signatures != null
                     if (info.signatures != null) {
                         info.signatures = arrayOf(sig)
                     }
+                    DiagnosticLogger.log("SIG_CALL", "getPackageInfo($targetPkg) hadSigs=$hadSigs hasSigningInfo=${if (Build.VERSION.SDK_INT >= 28) info.signingInfo != null else false}")
                 }
             })
 
@@ -51,6 +58,7 @@ object SignatureHook {
                     val pkgArg = callFrame.args.firstOrNull() as? String ?: return
                     if (pkgArg == targetPkg) {
                         callFrame.result = true
+                        DiagnosticLogger.log("SIG_CALL", "hasSigningCertificate($targetPkg) -> true")
                     }
                 }
             })
@@ -65,6 +73,7 @@ object SignatureHook {
             })
         }.onFailure {
             Log.w(TAG, "ApplicationPackageManager hook failed: ${it.message}")
+            DiagnosticLogger.log("SIG_ERR", "APM hook failed: ${it.message}")
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -73,15 +82,18 @@ object SignatureHook {
                 HookUtils.hookAllByName(siClass, "getApkContentsSigners", object : MethodHook() {
                     override fun afterCall(callFrame: Pine.CallFrame) {
                         origSignature?.let { callFrame.result = arrayOf(it) }
+                        DiagnosticLogger.log("SIG_CALL", "SigningInfo.getApkContentsSigners() spoofed")
                     }
                 })
                 HookUtils.hookAllByName(siClass, "getSigningCertificateHistory", object : MethodHook() {
                     override fun afterCall(callFrame: Pine.CallFrame) {
                         origSignature?.let { callFrame.result = arrayOf(it) }
+                        DiagnosticLogger.log("SIG_CALL", "SigningInfo.getSigningCertificateHistory() spoofed")
                     }
                 })
             }.onFailure {
                 Log.w(TAG, "SigningInfo hook failed: ${it.message}")
+                DiagnosticLogger.log("SIG_ERR", "SigningInfo hook failed: ${it.message}")
             }
         }
 
@@ -92,11 +104,13 @@ object SignatureHook {
                     val name = entry.name
                     if (name.endsWith(".dex") || name == "AndroidManifest.xml" || name == "resources.arsc") {
                         origCertificate?.let { callFrame.result = arrayOf(it) }
+                        DiagnosticLogger.log("SIG_CALL", "JarEntry.getCertificates($name) spoofed")
                     }
                 }
             })
         }.onFailure {
             Log.w(TAG, "JarEntry.getCertificates hook failed: ${it.message}")
+            DiagnosticLogger.log("SIG_ERR", "JarEntry hook failed: ${it.message}")
         }
     }
 }
