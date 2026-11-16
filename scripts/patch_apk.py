@@ -56,12 +56,21 @@ def _replace_method_body(method_block: str, new_body: str) -> str:
     return f"{header}{new_body}{footer}"
 
 
+def _neutralize_debug_checks(text: str) -> str:
+    return re.sub(
+        r"invoke-static\s+\{\},\s+Landroid/os/Debug;->(?:isDebuggerConnected|waitingForDebugger)\(\)Z\s*\n\s*move-result\s+([vp]\d+)",
+        r"const/4 \1, 0x0",
+        text,
+    )
+
+
 def bypass_samurai_integrity_checks(target_dir: Path, orig_sha256: str) -> None:
     method_re = re.compile(r"(^\.method\b.*?^\.end method\s*$)", re.MULTILINE | re.DOTALL)
     patched_files = 0
 
     for smali_file in target_dir.glob("smali*/**/*.smali"):
         text = smali_file.read_text(encoding="utf-8", errors="ignore")
+
         if "security_blocked_signer_sha256_csv" in text:
             def patch_integrity_method(match: re.Match[str]) -> str:
                 block = match.group(1)
@@ -84,19 +93,60 @@ def bypass_samurai_integrity_checks(target_dir: Path, orig_sha256: str) -> None:
                             block,
                             "    .locals 1\n\n    const/4 v0, 0x1\n\n    return v0\n",
                         )
+                if header.endswith(")Z") and "Ljava/lang/Boolean;->TRUE:Ljava/lang/Boolean;" in block:
+                    return _replace_method_body(
+                        block,
+                        "    .locals 1\n\n    const/4 v0, 0x1\n\n    return v0\n",
+                    )
                 return block
 
             new_text = method_re.sub(patch_integrity_method, text)
             new_text = new_text.replace('"/proc/self/maps"', '"/dev/null"')
+            new_text = _neutralize_debug_checks(new_text)
             smali_file.write_text(new_text, encoding="utf-8")
             patched_files += 1
             print(f"[+] Patched integrity checker in {smali_file}")
 
-        elif "X-Device-Integrity" in text and '"/proc/self/maps"' in text:
-            new_text = text.replace('"/proc/self/maps"', '"/dev/null"')
+        elif "PMS_HOOK_DETECTED:disk_signer_mismatch" in text or "security: periodic_integrity_violation" in text:
+            def patch_periodic_method(match: re.Match[str]) -> str:
+                block = match.group(1)
+                header = block.splitlines()[0]
+                if "invokeSuspend(Ljava/lang/Object;)Ljava/lang/Object;" in header:
+                    return _replace_method_body(
+                        block,
+                        "    .locals 1\n\n    sget-object v0, Lkotlin/Unit;->INSTANCE:Lkotlin/Unit;\n\n    return-object v0\n",
+                    )
+                return block
+
+            new_text = method_re.sub(patch_periodic_method, text)
+            new_text = new_text.replace('"/proc/self/maps"', '"/dev/null"')
+            new_text = _neutralize_debug_checks(new_text)
             smali_file.write_text(new_text, encoding="utf-8")
             patched_files += 1
-            print(f"[+] Patched proc/self/maps check in {smali_file}")
+            print(f"[+] Patched periodic integrity monitor in {smali_file}")
+
+        elif "security: unofficial_apk_blocked entry=" in text:
+            def patch_gate_method(match: re.Match[str]) -> str:
+                block = match.group(1)
+                header = block.splitlines()[0]
+                if header.endswith(")Z") and "unofficial_apk_blocked" in block:
+                    return _replace_method_body(
+                        block,
+                        "    .locals 1\n\n    const/4 v0, 0x1\n\n    return v0\n",
+                    )
+                return block
+
+            new_text = method_re.sub(patch_gate_method, text)
+            smali_file.write_text(new_text, encoding="utf-8")
+            patched_files += 1
+            print(f"[+] Patched integrity gate in {smali_file}")
+
+        elif "X-Device-Integrity" in text and '"/proc/self/maps"' in text:
+            new_text = text.replace('"/proc/self/maps"', '"/dev/null"')
+            new_text = _neutralize_debug_checks(new_text)
+            smali_file.write_text(new_text, encoding="utf-8")
+            patched_files += 1
+            print(f"[+] Patched integrity headers in {smali_file}")
 
     if patched_files == 0:
         print("[!] Integrity checker smali classes not found (skipped smali bypass)")

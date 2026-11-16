@@ -54,6 +54,15 @@ object SignatureHook {
                     }
                 }
             })
+
+            HookUtils.hookAllByName(apmClass, "getInstallerPackageName", object : MethodHook() {
+                override fun afterCall(callFrame: Pine.CallFrame) {
+                    val pkgArg = callFrame.args.firstOrNull() as? String ?: return
+                    if (pkgArg == targetPkg) {
+                        callFrame.result = "com.android.vending"
+                    }
+                }
+            })
         }.onFailure {
             Log.w(TAG, "ApplicationPackageManager hook failed: ${it.message}")
         }
@@ -80,7 +89,8 @@ object SignatureHook {
             HookUtils.hookAllByName(JarEntry::class.java, "getCertificates", object : MethodHook() {
                 override fun afterCall(callFrame: Pine.CallFrame) {
                     val entry = callFrame.thisObject as? JarEntry ?: return
-                    if (entry.name == "classes.dex") {
+                    val name = entry.name
+                    if (name.endsWith(".dex") || name == "AndroidManifest.xml" || name == "resources.arsc") {
                         origCertificate?.let { callFrame.result = arrayOf(it) }
                     }
                 }
