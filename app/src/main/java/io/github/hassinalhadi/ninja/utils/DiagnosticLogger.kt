@@ -25,6 +25,7 @@ import top.canyie.pine.callback.MethodHook
 import java.io.File
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
+import java.util.Arrays
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.CopyOnWriteArrayList
@@ -39,13 +40,14 @@ object DiagnosticLogger {
     private val timeFmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
 
     fun init(app: Application) {
-        runCatching {
+        try {
             val dir = app.getExternalFilesDir(null) ?: app.filesDir
-            logFile = File(dir, "ninja_diag.log").apply {
-                writeText("=== NinjaMod Diagnostic Log ===\n")
-            }
+            val f = File(dir, "ninja_diag.log")
+            f.writeText("=== NinjaMod Diagnostic Log ===\n")
+            logFile = f
+        } catch (_: Throwable) {
         }
-        log("INIT", "SDK=${Build.VERSION.SDK_INT} ABI=${Build.SUPPORTED_ABIS.joinToString()} PKG=${app.packageName}")
+        log("INIT", "SDK=${Build.VERSION.SDK_INT} ABI=${Arrays.toString(Build.SUPPORTED_ABIS)} PKG=${app.packageName}")
         log("INIT", "sourceDir=${app.applicationInfo.sourceDir}")
         log("INIT", "logFile=${logFile?.absolutePath ?: "none"}")
 
@@ -62,18 +64,33 @@ object DiagnosticLogger {
         Log.i(TAG, entry)
         lines.add(entry)
         while (lines.size > MAX_LINES) {
-            runCatching { lines.removeAt(0) }
+            try {
+                lines.removeAt(0)
+            } catch (_: Throwable) {
+                break
+            }
         }
-        runCatching {
+        try {
             logFile?.appendText(entry + "\n")
+        } catch (_: Throwable) {
         }
     }
 
-    fun getFullLog(): String = lines.joinToString("\n")
+    fun getFullLog(): String {
+        val sb = StringBuilder()
+        for (i in lines.indices) {
+            if (i > 0) sb.append('\n')
+            sb.append(lines[i])
+        }
+        return sb.toString()
+    }
 
     fun clear() {
         lines.clear()
-        runCatching { logFile?.writeText("=== Cleared ===\n") }
+        try {
+            logFile?.writeText("=== Cleared ===\n")
+        } catch (_: Throwable) {
+        }
     }
 
     private fun registerActivityLogButton(app: Application) {
@@ -98,7 +115,7 @@ object DiagnosticLogger {
     }
 
     private fun attachLogButton(activity: Activity) {
-        runCatching {
+        try {
             val decor = activity.window?.decorView as? ViewGroup ?: return
             if (decor.findViewWithTag<TextView>(LOG_BTN_TAG) != null) return
 
@@ -130,15 +147,16 @@ object DiagnosticLogger {
             }
 
             decor.addView(btn, lp)
-        }.onFailure {
-            Log.w(TAG, "attachLogButton failed: ${it.message}")
+        } catch (t: Throwable) {
+            Log.w(TAG, "attachLogButton failed: ${t.message}")
         }
     }
 
     fun showLogDialog(context: Context) {
-        runCatching {
+        try {
+            val full = getFullLog()
             val tv = TextView(context).apply {
-                text = getFullLog().ifEmpty { "(empty)" }
+                text = if (full.isEmpty()) "(empty)" else full
                 textSize = 10f
                 typeface = Typeface.MONOSPACE
                 setTextIsSelectable(true)
@@ -162,58 +180,62 @@ object DiagnosticLogger {
                 }
                 .setNegativeButton("Close", null)
                 .show()
+        } catch (_: Throwable) {
         }
     }
 
     private fun installDialogAndIntegrityObservers(app: Application) {
-        runCatching {
+        try {
             val showMethod = Dialog::class.java.getDeclaredMethod("show")
             Pine.hook(showMethod, object : MethodHook() {
                 override fun beforeCall(callFrame: Pine.CallFrame) {
                     val dlg = callFrame.thisObject as? Dialog ?: return
-                    val trace = Throwable().stackTrace
-                        .drop(2)
-                        .take(12)
-                        .joinToString(" <- ") { "${it.className}.${it.methodName}:${it.lineNumber}" }
-                    log("DIALOG", "show() ${dlg.javaClass.name} | trace: $trace")
+                    val frames = Throwable().stackTrace
+                    val sb = StringBuilder()
+                    var count = 0
+                    for (i in 2 until frames.size) {
+                        if (count >= 12) break
+                        if (count > 0) sb.append(" <- ")
+                        val f = frames[i]
+                        sb.append(f.className).append('.').append(f.methodName).append(':').append(f.lineNumber)
+                        count++
+                    }
+                    log("DIALOG", "show() ${dlg.javaClass.name} | trace: $sb")
                 }
             })
             log("HOOK", "Dialog.show hooked OK")
-        }.onFailure {
-            log("HOOK_ERR", "Dialog.show hook failed: ${it.message}")
+        } catch (t: Throwable) {
+            log("HOOK_ERR", "Dialog.show hook failed: ${t.message}")
         }
 
-        runCatching {
-            val cl = app.classLoader
-            val uaD = Class.forName("ua.d", false, cl)
-            uaD.declaredMethods.forEach { m ->
-                runCatching {
-                    m.isAccessible = true
-                    Pine.hook(m, object : MethodHook() {
-                        override fun afterCall(callFrame: Pine.CallFrame) {
-                            val resStr = callFrame.result?.toString() ?: "null"
-                            val trimmed = if (resStr.length > 260) resStr.take(260) + "..." else resStr
-                            log("UA_D", "${m.name}() -> $trimmed")
-                        }
-                    })
-                }
+        try {
+            val assetBytes = readAssetBytes(app, "ninja_orig_cert.der")
+            log("CERT", "assets/ninja_orig_cert.der sha256=${sha256Hex(assetBytes)}")
+        } catch (t: Throwable) {
+            log("CERT", "assets/ninja_orig_cert.der MISSING(${t.message})")
+        }
+    }
+
+    fun readAssetBytes(context: Context, name: String): ByteArray {
+        val stream = context.assets.open(name)
+        return try {
+            stream.readBytes()
+        } finally {
+            try {
+                stream.close()
+            } catch (_: Throwable) {
             }
-            log("HOOK", "ua.d observer hooked (${uaD.declaredMethods.size} methods)")
-        }.onFailure {
-            log("HOOK_ERR", "ua.d observer skipped: ${it.message}")
-        }
-
-        runCatching {
-            val assetSha = runCatching {
-                val bytes = app.assets.open("ninja_orig_cert.der").use { it.readBytes() }
-                sha256Hex(bytes)
-            }.getOrElse { "MISSING(${it.message})" }
-            log("CERT", "assets/ninja_orig_cert.der sha256=$assetSha")
         }
     }
 
     fun sha256Hex(bytes: ByteArray): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
-        return digest.joinToString("") { "%02x".format(it) }
+        val sb = StringBuilder(digest.size * 2)
+        for (b in digest) {
+            val hex = Integer.toHexString(b.toInt() and 0xFF)
+            if (hex.length == 1) sb.append('0')
+            sb.append(hex)
+        }
+        return sb.toString()
     }
 }
