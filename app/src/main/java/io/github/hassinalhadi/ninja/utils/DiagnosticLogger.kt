@@ -22,6 +22,7 @@ import android.widget.TextView
 import android.widget.Toast
 import top.canyie.pine.Pine
 import top.canyie.pine.callback.MethodHook
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
@@ -219,7 +220,14 @@ object DiagnosticLogger {
     fun readAssetBytes(context: Context, name: String): ByteArray {
         val stream = context.assets.open(name)
         return try {
-            stream.readBytes()
+            val out = ByteArrayOutputStream()
+            val buf = ByteArray(4096)
+            while (true) {
+                val n = stream.read(buf)
+                if (n <= 0) break
+                out.write(buf, 0, n)
+            }
+            out.toByteArray()
         } finally {
             try {
                 stream.close()
