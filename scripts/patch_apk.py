@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 
-INJECT_CALL = "    invoke-static {p0}, Lio/github/hassinalhadi/ninja/NinjaMod;->init(Landroid/app/Application;)V\n"
+INJECT_CALL = "    invoke-static/range {p0 .. p0}, Lio/github/hassinalhadi/ninja/NinjaMod;->init(Landroid/app/Application;)V\n"
 
 
 def extract_v2_cert(apk_path: Path) -> bytes | None:
