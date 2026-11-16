@@ -35,17 +35,71 @@ def extract_v2_cert(apk_path: Path) -> bytes | None:
     return None
 
 
-def embed_original_cert(target_apk: Path, target_dir: Path) -> None:
+def embed_original_cert(target_apk: Path, target_dir: Path) -> str | None:
     cert_bytes = extract_v2_cert(target_apk)
     if not cert_bytes:
         print("[!] Could not extract v2/v3 cert from target APK")
-        return
+        return None
     assets_dir = target_dir / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
     out_cert = assets_dir / "ninja_orig_cert.der"
     out_cert.write_bytes(cert_bytes)
     sha256 = hashlib.sha256(cert_bytes).hexdigest()
     print(f"[+] Embedded original cert ({len(cert_bytes)} bytes, SHA-256: {sha256})")
+    return sha256
+
+
+def _replace_method_body(method_block: str, new_body: str) -> str:
+    lines = method_block.splitlines(keepends=True)
+    header = lines[0]
+    footer = lines[-1]
+    return f"{header}{new_body}{footer}"
+
+
+def bypass_samurai_integrity_checks(target_dir: Path, orig_sha256: str) -> None:
+    method_re = re.compile(r"(^\.method\b.*?^\.end method\s*$)", re.MULTILINE | re.DOTALL)
+    patched_files = 0
+
+    for smali_file in target_dir.glob("smali*/**/*.smali"):
+        text = smali_file.read_text(encoding="utf-8", errors="ignore")
+        if "security_blocked_signer_sha256_csv" in text:
+            def patch_integrity_method(match: re.Match[str]) -> str:
+                block = match.group(1)
+                header = block.splitlines()[0]
+                if "(Landroid/content/Context;)Ljava/lang/String;" in header and (
+                    "getPackageInfo" in block or "JarFile" in block
+                ):
+                    return _replace_method_body(
+                        block,
+                        f"    .locals 1\n\n    const-string v0, \"{orig_sha256}\"\n\n    return-object v0\n",
+                    )
+                if "(Landroid/content/Context;)Z" in header:
+                    if "getAssets" in block or "Ljava/lang/Class;->forName" in block or "ZipFile" in block:
+                        return _replace_method_body(
+                            block,
+                            "    .locals 1\n\n    const/4 v0, 0x0\n\n    return v0\n",
+                        )
+                    if "getApplicationContext" in block or "areEqual" in block:
+                        return _replace_method_body(
+                            block,
+                            "    .locals 1\n\n    const/4 v0, 0x1\n\n    return v0\n",
+                        )
+                return block
+
+            new_text = method_re.sub(patch_integrity_method, text)
+            new_text = new_text.replace('"/proc/self/maps"', '"/dev/null"')
+            smali_file.write_text(new_text, encoding="utf-8")
+            patched_files += 1
+            print(f"[+] Patched integrity checker in {smali_file}")
+
+        elif "X-Device-Integrity" in text and '"/proc/self/maps"' in text:
+            new_text = text.replace('"/proc/self/maps"', '"/dev/null"')
+            smali_file.write_text(new_text, encoding="utf-8")
+            patched_files += 1
+            print(f"[+] Patched proc/self/maps check in {smali_file}")
+
+    if patched_files == 0:
+        print("[!] Integrity checker smali classes not found (skipped smali bypass)")
 
 
 def find_next_smali_dir(target_dir: Path) -> Path:
@@ -148,8 +202,12 @@ def main() -> None:
     target_dir = Path(sys.argv[2])
     target_apk = Path(sys.argv[3]) if len(sys.argv) >= 4 else None
 
+    orig_sha256 = None
     if target_apk and target_apk.exists():
-        embed_original_cert(target_apk, target_dir)
+        orig_sha256 = embed_original_cert(target_apk, target_dir)
+
+    if orig_sha256:
+        bypass_samurai_integrity_checks(target_dir, orig_sha256)
 
     copy_mod_smali(mod_dir, target_dir)
     copy_native_libs(mod_dir, target_dir)
