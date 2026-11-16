@@ -24,6 +24,7 @@ import top.canyie.pine.Pine
 import top.canyie.pine.callback.MethodHook
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Arrays
@@ -40,11 +41,24 @@ object DiagnosticLogger {
     private var logFile: File? = null
     private val timeFmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
 
+    private fun writeToFile(file: File, text: String, append: Boolean) {
+        val fos = FileOutputStream(file, append)
+        try {
+            fos.write(text.toByteArray(Charsets.UTF_8))
+            fos.flush()
+        } finally {
+            try {
+                fos.close()
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
     fun init(app: Application) {
         try {
             val dir = app.getExternalFilesDir(null) ?: app.filesDir
             val f = File(dir, "ninja_diag.log")
-            f.writeText("=== NinjaMod Diagnostic Log ===\n")
+            writeToFile(f, "=== NinjaMod Diagnostic Log ===\n", false)
             logFile = f
         } catch (_: Throwable) {
         }
@@ -72,7 +86,7 @@ object DiagnosticLogger {
             }
         }
         try {
-            logFile?.appendText(entry + "\n")
+            logFile?.let { writeToFile(it, entry + "\n", true) }
         } catch (_: Throwable) {
         }
     }
@@ -89,7 +103,7 @@ object DiagnosticLogger {
     fun clear() {
         lines.clear()
         try {
-            logFile?.writeText("=== Cleared ===\n")
+            logFile?.let { writeToFile(it, "=== Cleared ===\n", false) }
         } catch (_: Throwable) {
         }
     }
