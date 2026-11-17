@@ -21,6 +21,8 @@ object SignatureHook {
     private var origSignature: Signature? = null
     private var origCertificate: Certificate? = null
     private var origSha256: String = ""
+    private var verName: String = "1.12.216"
+    private var verCode: String = "655"
 
     @SuppressLint("PrivateApi")
     fun install(app: Application) {
@@ -138,8 +140,6 @@ object SignatureHook {
         }
 
         // ua.n.alpha(Context) builds X-Device-Integrity & X-App-* headers for API requests
-        var verName = "1.12.216"
-        var verCode = "655"
         try {
             @Suppress("DEPRECATION")
             val pi = app.packageManager.getPackageInfo(targetPkg, 0)
