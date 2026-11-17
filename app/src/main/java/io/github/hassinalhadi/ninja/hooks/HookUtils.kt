@@ -15,24 +15,36 @@ object HookUtils {
             null
         }
 
+    private fun formatParamTypes(types: Array<Class<*>>): String {
+        val sb = StringBuilder()
+        for (i in types.indices) {
+            if (i > 0) sb.append(',')
+            sb.append(types[i].simpleName)
+        }
+        return sb.toString()
+    }
+
     fun hookAllByName(
         clazz: Class<*>,
         methodName: String,
         callback: MethodHook
     ) {
-        val matches = clazz.declaredMethods.filter { it.name == methodName }
-        if (matches.isEmpty()) {
-            DiagnosticLogger.log("HOOK_WARN", "No method ${clazz.name}.$methodName")
-        }
-        for (method in matches) {
+        val declared = clazz.declaredMethods
+        var found = false
+        for (method in declared) {
+            if (method.name != methodName) continue
+            found = true
             try {
                 method.isAccessible = true
                 Pine.hook(method, callback)
-                DiagnosticLogger.log("HOOK", "OK ${clazz.simpleName}.$methodName(${method.parameterTypes.joinToString(",") { it.simpleName }})")
+                DiagnosticLogger.log("HOOK", "OK ${clazz.simpleName}.$methodName(${formatParamTypes(method.parameterTypes)})")
             } catch (t: Throwable) {
                 Log.w(TAG, "Failed to hook ${clazz.name}.$methodName: ${t.message}")
                 DiagnosticLogger.log("HOOK_ERR", "FAIL ${clazz.simpleName}.$methodName: ${t.message}")
             }
+        }
+        if (!found) {
+            DiagnosticLogger.log("HOOK_WARN", "No method ${clazz.name}.$methodName")
         }
     }
 
