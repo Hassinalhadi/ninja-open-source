@@ -9,7 +9,11 @@ object HookUtils {
     private const val TAG = "NinjaMod"
 
     fun findClassOrNull(name: String, classLoader: ClassLoader): Class<*>? =
-        runCatching { Class.forName(name, false, classLoader) }.getOrNull()
+        try {
+            Class.forName(name, false, classLoader)
+        } catch (_: Throwable) {
+            null
+        }
 
     fun hookAllByName(
         clazz: Class<*>,
@@ -20,14 +24,14 @@ object HookUtils {
         if (matches.isEmpty()) {
             DiagnosticLogger.log("HOOK_WARN", "No method ${clazz.name}.$methodName")
         }
-        matches.forEach { method ->
-            runCatching {
+        for (method in matches) {
+            try {
                 method.isAccessible = true
                 Pine.hook(method, callback)
                 DiagnosticLogger.log("HOOK", "OK ${clazz.simpleName}.$methodName(${method.parameterTypes.joinToString(",") { it.simpleName }})")
-            }.onFailure {
-                Log.w(TAG, "Failed to hook ${clazz.name}.$methodName: ${it.message}")
-                DiagnosticLogger.log("HOOK_ERR", "FAIL ${clazz.simpleName}.$methodName: ${it.message}")
+            } catch (t: Throwable) {
+                Log.w(TAG, "Failed to hook ${clazz.name}.$methodName: ${t.message}")
+                DiagnosticLogger.log("HOOK_ERR", "FAIL ${clazz.simpleName}.$methodName: ${t.message}")
             }
         }
     }
@@ -38,14 +42,14 @@ object HookUtils {
         vararg paramTypes: Class<*>,
         callback: MethodHook
     ) {
-        runCatching {
+        try {
             val method = clazz.getDeclaredMethod(methodName, *paramTypes)
             method.isAccessible = true
             Pine.hook(method, callback)
             DiagnosticLogger.log("HOOK", "OK ${clazz.simpleName}.$methodName")
-        }.onFailure {
-            Log.w(TAG, "Failed to hook ${clazz.name}.$methodName: ${it.message}")
-            DiagnosticLogger.log("HOOK_ERR", "FAIL ${clazz.simpleName}.$methodName: ${it.message}")
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to hook ${clazz.name}.$methodName: ${t.message}")
+            DiagnosticLogger.log("HOOK_ERR", "FAIL ${clazz.simpleName}.$methodName: ${t.message}")
         }
     }
 }
