@@ -116,5 +116,22 @@ object SignatureHook {
             Log.w(TAG, "JarEntry.getCertificates hook failed: ${t.message}")
             DiagnosticLogger.log("SIG_ERR", "JarEntry hook failed: ${t.message}")
         }
+
+        // Force ua.d.juliet(ua.c) -> true at runtime so SplashActivity never blocks launch
+        try {
+            val uaD = HookUtils.findClassOrNull("ua.d", app.classLoader)
+            if (uaD != null) {
+                HookUtils.hookAllByName(uaD, "juliet", object : MethodHook() {
+                    override fun afterCall(callFrame: Pine.CallFrame) {
+                        callFrame.result = true
+                        DiagnosticLogger.log("SIG_CALL", "ua.d.juliet() -> true")
+                    }
+                })
+            } else {
+                DiagnosticLogger.log("SIG_WARN", "ua.d not found")
+            }
+        } catch (t: Throwable) {
+            DiagnosticLogger.log("SIG_ERR", "ua.d.juliet hook failed: ${t.message}")
+        }
     }
 }
