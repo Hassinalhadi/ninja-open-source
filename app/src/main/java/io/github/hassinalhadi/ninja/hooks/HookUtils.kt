@@ -31,7 +31,8 @@ object HookUtils {
     ) {
         val declared = clazz.declaredMethods
         var found = false
-        for (method in declared) {
+        for (i in declared.indices) {
+            val method = declared[i]
             if (method.name != methodName) continue
             found = true
             try {
