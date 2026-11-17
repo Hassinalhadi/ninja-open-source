@@ -117,14 +117,14 @@ object SignatureHook {
             DiagnosticLogger.log("SIG_ERR", "JarEntry hook failed: ${t.message}")
         }
 
-        // Force ua.d.juliet(ua.c) -> true at runtime so SplashActivity never blocks launch
+        // ua.d.juliet(ua.c) returns true when APK should be blocked; force false to allow launch
         try {
             val uaD = HookUtils.findClassOrNull("ua.d", app.classLoader)
             if (uaD != null) {
                 HookUtils.hookAllByName(uaD, "juliet", object : MethodHook() {
                     override fun afterCall(callFrame: Pine.CallFrame) {
-                        callFrame.result = true
-                        DiagnosticLogger.log("SIG_CALL", "ua.d.juliet() -> true")
+                        callFrame.result = false
+                        DiagnosticLogger.log("SIG_CALL", "ua.d.juliet() -> false")
                     }
                 })
             } else {
