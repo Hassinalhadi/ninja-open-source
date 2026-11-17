@@ -35,40 +35,46 @@ object NinjaMod {
         if (!initialized.compareAndSet(false, true)) return
 
         // Initialize logger FIRST so any Pine or hook error is always captured
-        runCatching {
+        try {
             DiagnosticLogger.init(app)
-        }.onFailure {
-            Log.e(TAG, "DiagnosticLogger init failed: ${it.message}", it)
+        } catch (t: Throwable) {
+            Log.e(TAG, "DiagnosticLogger init failed: ${t.message}", t)
         }
 
-        val pineOk = runCatching {
+        val pineOk = try {
             PineConfig.debug = false
             PineConfig.debuggable = false
             Pine.ensureInitialized()
             DiagnosticLogger.log("INIT", "Pine.ensureInitialized() OK")
             true
-        }.getOrElse {
-            DiagnosticLogger.log("INIT_ERR", "Pine.ensureInitialized() FAILED: ${it.stackTraceToString()}")
-            Log.e(TAG, "Pine init failed: ${it.message}", it)
+        } catch (t: Throwable) {
+            DiagnosticLogger.log("INIT_ERR", "Pine.ensureInitialized() FAILED: ${t.stackTraceToString()}")
+            Log.e(TAG, "Pine init failed: ${t.message}", t)
             false
         }
 
         if (pineOk) {
-            runCatching { DiagnosticLogger.installHooks(app) }
-                .onFailure { DiagnosticLogger.log("INIT_ERR", "DiagnosticLogger.installHooks failed: ${it.message}") }
+            try {
+                DiagnosticLogger.installHooks(app)
+            } catch (t: Throwable) {
+                DiagnosticLogger.log("INIT_ERR", "DiagnosticLogger.installHooks failed: ${t.message}")
+            }
 
-            runCatching { SignatureHook.install(app) }
-                .onFailure { DiagnosticLogger.log("INIT_ERR", "SignatureHook failed: ${it.message}") }
+            try {
+                SignatureHook.install(app)
+            } catch (t: Throwable) {
+                DiagnosticLogger.log("INIT_ERR", "SignatureHook failed: ${t.message}")
+            }
 
             val cl = app.classLoader
-            runCatching { CustomerLocationHook.install(app, cl) }
-            runCatching { ShowSupportHook.install(app, cl) }
-            runCatching { DisplayOrderNumberHook.install(app, cl) }
-            runCatching { FakeGpsHook.install(app, cl) }
-            runCatching { AutoRefreshHook.install(app, cl) }
-            runCatching { AutoClickerHook.install(app, cl) }
+            try { CustomerLocationHook.install(app, cl) } catch (_: Throwable) {}
+            try { ShowSupportHook.install(app, cl) } catch (_: Throwable) {}
+            try { DisplayOrderNumberHook.install(app, cl) } catch (_: Throwable) {}
+            try { FakeGpsHook.install(app, cl) } catch (_: Throwable) {}
+            try { AutoRefreshHook.install(app, cl) } catch (_: Throwable) {}
+            try { AutoClickerHook.install(app, cl) } catch (_: Throwable) {}
 
-            runCatching { injectFloatingPanelButton(cl) }
+            try { injectFloatingPanelButton(cl) } catch (_: Throwable) {}
         }
 
         DiagnosticLogger.log("INIT", "NinjaMod.init finished (pineOk=$pineOk)")
@@ -135,7 +141,7 @@ object NinjaMod {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    val moved = kotlin.math.hypot(
+                    val moved = Math.hypot(
                         (event.rawX - downRawX).toDouble(),
                         (event.rawY - downRawY).toDouble()
                     )
