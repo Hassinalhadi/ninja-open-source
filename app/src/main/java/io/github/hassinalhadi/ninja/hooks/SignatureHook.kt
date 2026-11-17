@@ -22,23 +22,25 @@ object SignatureHook {
 
     @SuppressLint("PrivateApi")
     fun install(app: Application) {
-        val certBytes = runCatching {
+        val certBytes = try {
             DiagnosticLogger.readAssetBytes(app, "ninja_orig_cert.der")
-        }.getOrElse {
-            DiagnosticLogger.log("SIG_ERR", "Cannot open ninja_orig_cert.der: ${it.message}")
+        } catch (t: Throwable) {
+            DiagnosticLogger.log("SIG_ERR", "Cannot open ninja_orig_cert.der: ${t.message}")
             return
         }
 
         val sig = Signature(certBytes)
         origSignature = sig
-        origCertificate = runCatching {
+        origCertificate = try {
             CertificateFactory.getInstance("X.509")
                 .generateCertificate(ByteArrayInputStream(certBytes))
-        }.getOrNull()
+        } catch (_: Throwable) {
+            null
+        }
         val targetPkg = app.packageName
         DiagnosticLogger.log("SIG", "Loaded orig cert (${certBytes.size}B) sha256=${DiagnosticLogger.sha256Hex(certBytes)}")
 
-        runCatching {
+        try {
             val apmClass = Class.forName("android.app.ApplicationPackageManager")
             HookUtils.hookAllByName(apmClass, "getPackageInfo", object : MethodHook() {
                 @Suppress("DEPRECATION")
@@ -55,7 +57,8 @@ object SignatureHook {
 
             HookUtils.hookAllByName(apmClass, "hasSigningCertificate", object : MethodHook() {
                 override fun afterCall(callFrame: Pine.CallFrame) {
-                    val pkgArg = callFrame.args.firstOrNull() as? String ?: return
+                    val args = callFrame.args
+                    val pkgArg = (if (args != null && args.isNotEmpty()) args[0] else null) as? String ?: return
                     if (pkgArg == targetPkg) {
                         callFrame.result = true
                         DiagnosticLogger.log("SIG_CALL", "hasSigningCertificate($targetPkg) -> true")
@@ -65,19 +68,20 @@ object SignatureHook {
 
             HookUtils.hookAllByName(apmClass, "getInstallerPackageName", object : MethodHook() {
                 override fun afterCall(callFrame: Pine.CallFrame) {
-                    val pkgArg = callFrame.args.firstOrNull() as? String ?: return
+                    val args = callFrame.args
+                    val pkgArg = (if (args != null && args.isNotEmpty()) args[0] else null) as? String ?: return
                     if (pkgArg == targetPkg) {
                         callFrame.result = "com.android.vending"
                     }
                 }
             })
-        }.onFailure {
-            Log.w(TAG, "ApplicationPackageManager hook failed: ${it.message}")
-            DiagnosticLogger.log("SIG_ERR", "APM hook failed: ${it.message}")
+        } catch (t: Throwable) {
+            Log.w(TAG, "ApplicationPackageManager hook failed: ${t.message}")
+            DiagnosticLogger.log("SIG_ERR", "APM hook failed: ${t.message}")
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            runCatching {
+            try {
                 val siClass = SigningInfo::class.java
                 HookUtils.hookAllByName(siClass, "getApkContentsSigners", object : MethodHook() {
                     override fun afterCall(callFrame: Pine.CallFrame) {
@@ -91,13 +95,13 @@ object SignatureHook {
                         DiagnosticLogger.log("SIG_CALL", "SigningInfo.getSigningCertificateHistory() spoofed")
                     }
                 })
-            }.onFailure {
-                Log.w(TAG, "SigningInfo hook failed: ${it.message}")
-                DiagnosticLogger.log("SIG_ERR", "SigningInfo hook failed: ${it.message}")
+            } catch (t: Throwable) {
+                Log.w(TAG, "SigningInfo hook failed: ${t.message}")
+                DiagnosticLogger.log("SIG_ERR", "SigningInfo hook failed: ${t.message}")
             }
         }
 
-        runCatching {
+        try {
             HookUtils.hookAllByName(JarEntry::class.java, "getCertificates", object : MethodHook() {
                 override fun afterCall(callFrame: Pine.CallFrame) {
                     val entry = callFrame.thisObject as? JarEntry ?: return
@@ -108,9 +112,9 @@ object SignatureHook {
                     }
                 }
             })
-        }.onFailure {
-            Log.w(TAG, "JarEntry.getCertificates hook failed: ${it.message}")
-            DiagnosticLogger.log("SIG_ERR", "JarEntry hook failed: ${it.message}")
+        } catch (t: Throwable) {
+            Log.w(TAG, "JarEntry.getCertificates hook failed: ${t.message}")
+            DiagnosticLogger.log("SIG_ERR", "JarEntry hook failed: ${t.message}")
         }
     }
 }
