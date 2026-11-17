@@ -13,12 +13,14 @@ import top.canyie.pine.callback.MethodHook
 import java.io.ByteArrayInputStream
 import java.security.cert.Certificate
 import java.security.cert.CertificateFactory
+import java.util.LinkedHashMap
 import java.util.jar.JarEntry
 
 object SignatureHook {
     private const val TAG = "NinjaMod[Sig]"
     private var origSignature: Signature? = null
     private var origCertificate: Certificate? = null
+    private var origSha256: String = ""
 
     @SuppressLint("PrivateApi")
     fun install(app: Application) {
@@ -31,6 +33,7 @@ object SignatureHook {
 
         val sig = Signature(certBytes)
         origSignature = sig
+        origSha256 = DiagnosticLogger.sha256Hex(certBytes)
         origCertificate = try {
             CertificateFactory.getInstance("X.509")
                 .generateCertificate(ByteArrayInputStream(certBytes))
@@ -38,7 +41,7 @@ object SignatureHook {
             null
         }
         val targetPkg = app.packageName
-        DiagnosticLogger.log("SIG", "Loaded orig cert (${certBytes.size}B) sha256=${DiagnosticLogger.sha256Hex(certBytes)}")
+        DiagnosticLogger.log("SIG", "Loaded orig cert (${certBytes.size}B) sha256=$origSha256")
 
         try {
             val apmClass = Class.forName("android.app.ApplicationPackageManager")
@@ -132,6 +135,40 @@ object SignatureHook {
             }
         } catch (t: Throwable) {
             DiagnosticLogger.log("SIG_ERR", "ua.d.juliet hook failed: ${t.message}")
+        }
+
+        // ua.n.alpha(Context) builds X-Device-Integrity & X-App-* headers for API requests
+        var verName = "1.12.216"
+        var verCode = "655"
+        try {
+            @Suppress("DEPRECATION")
+            val pi = app.packageManager.getPackageInfo(targetPkg, 0)
+            if (!pi.versionName.isNullOrEmpty()) verName = pi.versionName!!
+            verCode = if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode.toString() else @Suppress("DEPRECATION") pi.versionCode.toString()
+        } catch (_: Throwable) {
+        }
+
+        try {
+            val uaN = HookUtils.findClassOrNull("ua.n", app.classLoader)
+            if (uaN != null) {
+                HookUtils.hookAllByName(uaN, "alpha", object : MethodHook() {
+                    override fun afterCall(callFrame: Pine.CallFrame) {
+                        val clean = LinkedHashMap<String, String>()
+                        clean["X-App-Installer"] = "com.android.vending"
+                        clean["X-App-Signature"] = origSha256
+                        clean["X-App-Version-Name"] = verName
+                        clean["X-App-Version-Code"] = verCode
+                        clean["X-Device-Integrity"] = "CLEAN"
+                        clean["X-Integrity-Timestamp"] = System.currentTimeMillis().toString()
+                        callFrame.result = clean
+                        DiagnosticLogger.log("SIG_CALL", "ua.n.alpha() -> CLEAN")
+                    }
+                })
+            } else {
+                DiagnosticLogger.log("SIG_WARN", "ua.n not found")
+            }
+        } catch (t: Throwable) {
+            DiagnosticLogger.log("SIG_ERR", "ua.n.alpha hook failed: ${t.message}")
         }
     }
 }
