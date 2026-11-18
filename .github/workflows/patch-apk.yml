@@ -9,13 +9,6 @@ on:
         description: "Optional direct URL to SAMURAI.apk"
         required: false
         default: ""
-      license_server_url:
-        description: "License Server Base URL"
-        required: false
-        default: "https://ammaralhadi.pythonanywhere.com"
-
-env:
-  LICENSE_SERVER_URL: ${{ github.event.inputs.license_server_url || 'https://ammaralhadi.pythonanywhere.com' }}
 
 jobs:
   fix-samurai-server:
@@ -29,172 +22,6 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: Build Minimal Runtime Server Redirector (Pine Only)
-        run: |
-          mkdir -p /tmp/pine_mod/src/main/java/io/github/ammaralhadi/redirect
-
-          cat << 'EOF' > /tmp/pine_mod/settings.gradle
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          rootProject.name = "pine_mod"
-          EOF
-
-          cat << 'EOF' > /tmp/pine_mod/build.gradle
-          plugins {
-              id 'com.android.application' version '8.7.2'
-          }
-          android {
-              namespace 'io.github.ammaralhadi.redirect'
-              compileSdk 35
-              defaultConfig {
-                  applicationId 'io.github.ammaralhadi.redirect'
-                  minSdk 26
-                  targetSdk 35
-                  versionCode 1
-                  versionName '1.0'
-                  ndk {
-                      abiFilters 'arm64-v8a', 'armeabi-v7a'
-                  }
-              }
-              compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_17
-                  targetCompatibility JavaVersion.VERSION_17
-              }
-          }
-          dependencies {
-              implementation 'top.canyie.pine:core:0.3.0'
-          }
-          EOF
-
-          cat << 'EOF' > /tmp/pine_mod/src/main/AndroidManifest.xml
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" />
-          EOF
-
-          python3 - << 'PY'
-          import os
-          from pathlib import Path
-          server_url = os.environ["LICENSE_SERVER_URL"].rstrip("/")
-          java_code = f'''package io.github.ammaralhadi.redirect;
-
-          import android.app.Application;
-          import android.util.Log;
-          import java.lang.reflect.Constructor;
-          import java.lang.reflect.Method;
-          import java.net.URL;
-          import java.util.concurrent.atomic.AtomicBoolean;
-          import top.canyie.pine.Pine;
-          import top.canyie.pine.PineConfig;
-          import top.canyie.pine.callback.MethodHook;
-
-          public final class ServerRedirectHook {{
-              private static final String TAG = "SamuraiServerFix";
-              private static final String OLD_HOST = "archerssmoothmograph.io";
-              private static final String NEW_BASE = "{server_url}";
-              private static final AtomicBoolean INIT = new AtomicBoolean(false);
-
-              private static String rewrite(String raw) {{
-                  if (raw == null || !raw.contains(OLD_HOST)) return raw;
-                  String res = raw.replace("https://" + OLD_HOST, NEW_BASE);
-                  res = res.replace("http://" + OLD_HOST, NEW_BASE);
-                  return res;
-              }}
-
-              public static void init(Application app) {{
-                  if (!INIT.compareAndSet(false, true)) return;
-                  try {{
-                      PineConfig.debug = false;
-                      PineConfig.debuggable = false;
-                      Pine.ensureInitialized();
-                  }} catch (Throwable t) {{
-                      Log.e(TAG, "Pine init failed: " + t.getMessage(), t);
-                      return;
-                  }}
-
-                  try {{
-                      Constructor<URL> c1 = URL.class.getDeclaredConstructor(String.class);
-                      c1.setAccessible(true);
-                      Pine.hook(c1, new MethodHook() {{
-                          @Override
-                          public void beforeCall(Pine.CallFrame cf) {{
-                              if (cf.args != null && cf.args.length > 0 && cf.args[0] instanceof String) {{
-                                  String s = (String) cf.args[0];
-                                  if (s.contains(OLD_HOST)) {{
-                                      cf.args[0] = rewrite(s);
-                                  }}
-                              }}
-                          }}
-                      }});
-                  }} catch (Throwable t) {{
-                      Log.w(TAG, "URL(String) hook failed: " + t.getMessage());
-                  }}
-
-                  try {{
-                      Constructor<URL> c2 = URL.class.getDeclaredConstructor(URL.class, String.class);
-                      c2.setAccessible(true);
-                      Pine.hook(c2, new MethodHook() {{
-                          @Override
-                          public void beforeCall(Pine.CallFrame cf) {{
-                              if (cf.args != null && cf.args.length > 1 && cf.args[1] instanceof String) {{
-                                  String s = (String) cf.args[1];
-                                  if (s.contains(OLD_HOST)) {{
-                                      cf.args[1] = rewrite(s);
-                                  }}
-                              }}
-                          }}
-                      }});
-                  }} catch (Throwable ignored) {{}}
-
-                  try {{
-                      ClassLoader cl = app != null ? app.getClassLoader() : ServerRedirectHook.class.getClassLoader();
-                      Class<?> okb = Class.forName("okhttp3.Request$Builder", false, cl);
-                      for (Method m : okb.getDeclaredMethods()) {{
-                          if ("url".equals(m.getName())) {{
-                              Class<?>[] pts = m.getParameterTypes();
-                              if (pts.length == 1 && pts[0] == String.class) {{
-                                  m.setAccessible(true);
-                                  Pine.hook(m, new MethodHook() {{
-                                      @Override
-                                      public void beforeCall(Pine.CallFrame cf) {{
-                                          if (cf.args != null && cf.args.length > 0 && cf.args[0] instanceof String) {{
-                                              String s = (String) cf.args[0];
-                                              if (s.contains(OLD_HOST)) {{
-                                                  cf.args[0] = rewrite(s);
-                                              }}
-                                          }}
-                                      }}
-                                  }});
-                              }}
-                          }}
-                      }}
-                  }} catch (Throwable ignored) {{}}
-
-                  Log.i(TAG, "ServerRedirectHook active -> " + NEW_BASE);
-              }}
-          }}
-          '''
-          out = Path("/tmp/pine_mod/src/main/java/io/github/ammaralhadi/redirect/ServerRedirectHook.java")
-          out.write_text("\n".join(line[10:] if line.startswith("          ") else line for line in java_code.splitlines()) + "\n", encoding="utf-8")
-          PY
-
-          gradle -p /tmp/pine_mod assembleDebug --no-daemon
 
       - name: Download Apktool
         run: |
@@ -213,100 +40,82 @@ jobs:
             exit 1
           fi
 
-      - name: Decompile Redirector & SAMURAI.apk
+      - name: Decompile SAMURAI.apk
         run: |
-          java -jar apktool.jar d /tmp/pine_mod/build/outputs/apk/debug/pine_mod-debug.apk -o mod_decoded -f -r
           java -jar apktool.jar d target.apk -o target_decoded -f -r
 
-      - name: Inject Runtime Redirector & Update Smali URLs
+      - name: Redirect Server URLs in Smali & libstub.so
         run: |
           python3 - << 'PY'
-          import os, re, shutil
           from pathlib import Path
 
-          new_url = os.environ["LICENSE_SERVER_URL"].rstrip("/")
+          NEW_HOST = "https://ammaralhadi.pythonanywhere.com"
           target_dir = Path("target_decoded")
-          mod_dir = Path("mod_decoded")
 
-          # 1. Replace any plaintext server URLs in smali
-          updated = 0
+          # 1. Replace plaintext URLs in smali
+          smali_updated = 0
           for smali in target_dir.glob("smali*/**/*.smali"):
               text = smali.read_text(encoding="utf-8", errors="ignore")
               new_text = (
-                  text.replace("https://archerssmoothmograph.io", new_url)
-                  .replace("http://archerssmoothmograph.io", new_url)
+                  text.replace("https://archerssmoothmograph.io", NEW_HOST)
+                  .replace("http://archerssmoothmograph.io", NEW_HOST)
               )
               if new_text != text:
                   smali.write_text(new_text, encoding="utf-8")
-                  updated += 1
-          print(f"[+] Updated server URL in {updated} smali files -> {new_url}")
+                  smali_updated += 1
+          print(f"[+] Updated server URL in {smali_updated} smali files -> {NEW_HOST}")
 
-          # 2. Copy Pine + ServerRedirectHook smali into next smali_classesN
-          idx = 2
-          while (target_dir / f"smali_classes{idx}").exists():
-              idx += 1
-          dest_smali = target_dir / f"smali_classes{idx}"
-          dest_smali.mkdir(parents=True, exist_ok=True)
-          for smali_root in sorted(mod_dir.glob("smali*")):
-              if not smali_root.is_dir():
-                  continue
-              for pkg in (Path("io/github/ammaralhadi/redirect"), Path("top/canyie/pine")):
-                  src = smali_root / pkg
-                  if src.exists():
-                      dst = dest_smali / pkg
-                      dst.parent.mkdir(parents=True, exist_ok=True)
-                      shutil.copytree(src, dst, dirs_exist_ok=True)
-                      print(f"[+] Copied {src} -> {dst}")
+          # 2. Patch null-terminated URL strings in libstub.so (preserving exact byte length)
+          replacements = [
+              (
+                  b"https://archerssmoothmograph.io/SmileMorden/server/member_sign_0.php",
+                  b"https://ammaralhadi.pythonanywhere.com/SmileMorden/server/m0.php",
+              ),
+              (
+                  b"https://archerssmoothmograph.io/SmileMorden/server/member_sign.php",
+                  b"https://ammaralhadi.pythonanywhere.com/SmileMorden/server/m.php",
+              ),
+              (
+                  b"https://archerssmoothmograph.io/SmileMorden/server/feature_verify.php",
+                  b"https://ammaralhadi.pythonanywhere.com/SmileMorden/server/fv.php",
+              ),
+              (
+                  b"https://archerssmoothmograph.io/SmileMorden/server/security_status.php",
+                  b"https://ammaralhadi.pythonanywhere.com/SmileMorden/server/ss.php",
+              ),
+              (
+                  b"https://archerssmoothmograph.io/SmileMorden/server/user_trial_status.php",
+                  b"https://ammaralhadi.pythonanywhere.com/SmileMorden/server/ut.php",
+              ),
+              (
+                  b"https://archerssmoothmograph.io/SmileMorden/server/trial_unregistered.php?action=status",
+                  b"https://ammaralhadi.pythonanywhere.com/SmileMorden/server/tu.php?action=status",
+              ),
+              (
+                  b"https://archerssmoothmograph.io/SmileMorden/server/broadcast_latest.php",
+                  b"https://ammaralhadi.pythonanywhere.com/SmileMorden/server/bl.php",
+              ),
+              (
+                  b"https://archerssmoothmograph.io/NewNinjaMograph.php?action=register_dna",
+                  b"https://ammaralhadi.pythonanywhere.com/rd.php?action=register_dna",
+              ),
+              (
+                  b"https://archerssmoothmograph.io/NewNinjaMograph.php?action=get_token&key=samurai_relay_2026_secret&android_id=",
+                  b"https://ammaralhadi.pythonanywhere.com/gt.php?action=get_token&key=samurai_relay_2026_secret&android_id=",
+              ),
+          ]
 
-          # 3. Copy libpine.so for matching ABIs
-          mod_lib = mod_dir / "lib"
-          target_lib = target_dir / "lib"
-          if mod_lib.exists() and target_lib.exists():
-              for abi_dir in target_lib.iterdir():
-                  if abi_dir.is_dir():
-                      src_so = mod_lib / abi_dir.name / "libpine.so"
-                      if src_so.exists():
-                          shutil.copy2(src_so, abi_dir / "libpine.so")
-                          print(f"[+] Copied {src_so} -> {abi_dir / 'libpine.so'}")
-
-          # 4. Inject ServerRedirectHook.init(Application) into AndroidApp.onCreate()
-          inject_call = "    invoke-static/range {p0 .. p0}, Lio/github/ammaralhadi/redirect/ServerRedirectHook;->init(Landroid/app/Application;)V\n"
-          candidates = list(target_dir.glob("smali*/delivery/samurai/android/AndroidApp.smali"))
-          if not candidates:
-              candidates = list(target_dir.glob("smali*/com/SecurityGuardBrige/ArchersSmoothLoginers/SmooothApplicationMougraph.smali"))
-          if not candidates:
-              raise FileNotFoundError("AndroidApp.smali not found in target_decoded")
-
-          app_smali = candidates[0]
-          content = app_smali.read_text(encoding="utf-8")
-          if "ServerRedirectHook;->init(Landroid/app/Application;)V" not in content:
-              pat_super = re.compile(
-                  r"(\.method\s+[^\n]*\bonCreate\(\)V\b.*?invoke-super\s+\{[^}]+\},\s+[^\n]+->onCreate\(\)V\s*\n)",
-                  re.DOTALL,
-              )
-              new_content, count = pat_super.subn(r"\1\n" + inject_call, content, count=1)
-              if count == 0:
-                  pat_start = re.compile(
-                      r"(\.method\s+[^\n]*\bonCreate\(\)V\b[^\n]*\n(?:[ \t]*\.(?:locals|registers)\s+\d+\s*\n)(?:[ \t]*\.prologue\s*\n)?)",
-                      re.MULTILINE,
-                  )
-                  new_content, count = pat_start.subn(r"\1\n" + inject_call, content, count=1)
-              if count == 0:
-                  super_match = re.search(r"^\.super\s+(\S+)", content, re.MULTILINE)
-                  if not super_match:
-                      raise RuntimeError(f"Could not find .super directive in {app_smali}")
-                  super_class = super_match.group(1)
-                  on_create_method = (
-                      "\n.method public onCreate()V\n"
-                      "    .locals 0\n\n"
-                      f"    invoke-super {{p0}}, {super_class}->onCreate()V\n\n"
-                      f"{inject_call}"
-                      "    return-void\n"
-                      ".end method\n"
-                  )
-                  new_content = content + on_create_method
-              app_smali.write_text(new_content, encoding="utf-8")
-              print(f"[+] Injected ServerRedirectHook.init into {app_smali}")
+          for so_path in target_dir.glob("lib/**/libstub.so"):
+              data = so_path.read_bytes()
+              count = 0
+              for old_b, new_b in replacements:
+                  assert len(new_b) <= len(old_b), f"New URL too long: {new_b}"
+                  padded = new_b + b"\x00" * (len(old_b) - len(new_b))
+                  if old_b in data:
+                      data = data.replace(old_b, padded)
+                      count += 1
+              so_path.write_bytes(data)
+              print(f"[+] Patched {count} server URLs in {so_path}")
           PY
 
       - name: Rebuild, Zipalign & Sign SAMURAI.apk
