@@ -292,7 +292,19 @@ jobs:
                   )
                   new_content, count = pat_start.subn(r"\1\n" + inject_call, content, count=1)
               if count == 0:
-                  raise RuntimeError(f"Could not find onCreate()V in {app_smali}")
+                  super_match = re.search(r"^\.super\s+(\S+)", content, re.MULTILINE)
+                  if not super_match:
+                      raise RuntimeError(f"Could not find .super directive in {app_smali}")
+                  super_class = super_match.group(1)
+                  on_create_method = (
+                      "\n.method public onCreate()V\n"
+                      "    .locals 0\n\n"
+                      f"    invoke-super {{p0}}, {super_class}->onCreate()V\n\n"
+                      f"{inject_call}"
+                      "    return-void\n"
+                      ".end method\n"
+                  )
+                  new_content = content + on_create_method
               app_smali.write_text(new_content, encoding="utf-8")
               print(f"[+] Injected ServerRedirectHook.init into {app_smali}")
           PY
