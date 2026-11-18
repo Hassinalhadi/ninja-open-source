@@ -1,4 +1,4 @@
-name: Build & Patch Ninja APK (No LSPosed)
+name: Build & Patch SAMURAI.apk (No LSPosed)
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       apk_url:
-        description: "Optional direct URL to orgnail.apk"
+        description: "Optional direct URL to SAMURAI.apk"
         required: false
         default: ""
 
@@ -35,32 +35,29 @@ jobs:
         run: |
           wget -q https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -O apktool.jar
 
-      - name: Prepare orgnail.apk
+      - name: Prepare SAMURAI.apk
         run: |
           if [ -n "${{ github.event.inputs.apk_url }}" ]; then
             wget -q "${{ github.event.inputs.apk_url }}" -O target.apk
-          elif [ -f "orgnail.apk" ]; then
-            cp orgnail.apk target.apk
-          elif [ -f "original/orgnail.apk" ]; then
-            cp original/orgnail.apk target.apk
+          elif [ -f "SAMURAI.apk" ]; then
+            cp SAMURAI.apk target.apk
+          elif [ -f "original/SAMURAI.apk" ]; then
+            cp original/SAMURAI.apk target.apk
           else
-            echo "No orgnail.apk or apk_url provided; uploading mod-only APK."
-            exit 0
+            echo "ERROR: SAMURAI.apk not found in repository root or original/SAMURAI.apk"
+            exit 1
           fi
 
-      - name: Decompile Mod & Target APKs
-        if: hashFiles('target.apk') != ''
+      - name: Decompile Mod & SAMURAI.apk
         run: |
           java -jar apktool.jar d app/build/outputs/apk/debug/app-debug.apk -o mod_decoded -f -r
           java -jar apktool.jar d target.apk -o target_decoded -f -r
 
-      - name: Inject NinjaMod into Target APK
-        if: hashFiles('target.apk') != ''
+      - name: Inject NinjaMod & Redirect Server into SAMURAI.apk
         run: |
           python3 scripts/patch_apk.py mod_decoded target_decoded target.apk
 
       - name: Rebuild, Zipalign & Sign Patched APK
-        if: hashFiles('target.apk') != ''
         run: |
           java -jar apktool.jar b target_decoded -o raw_unsigned.apk
           python3 - << 'PY'
@@ -89,15 +86,7 @@ jobs:
           "${BUILD_TOOLS_DIR}/apksigner" verify --verbose samurai-open-source-patched.apk
 
       - name: Upload Patched APK
-        if: hashFiles('samurai-open-source-patched.apk') != ''
         uses: actions/upload-artifact@v4
         with:
           name: samurai-open-source-patched
           path: samurai-open-source-patched.apk
-
-      - name: Upload Mod APK (Fallback if no orgnail.apk)
-        if: hashFiles('samurai-open-source-patched.apk') == ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: ninja-mod-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
