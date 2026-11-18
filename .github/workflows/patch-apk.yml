@@ -1,4 +1,4 @@
-name: Fix SAMURAI.apk Server Connection
+name: Fix SAMURAI.apk Server Connection & Add Diagnostic Log
 
 on:
   push:
@@ -23,6 +23,233 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build Diagnostic Log Overlay (No Pine)
+        run: |
+          mkdir -p /tmp/diag_mod/src/main/java/io/github/ammaralhadi/diag
+
+          cat << 'EOF' > /tmp/diag_mod/settings.gradle
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "diag_mod"
+          EOF
+
+          cat << 'EOF' > /tmp/diag_mod/build.gradle
+          plugins {
+              id 'com.android.application' version '8.7.2'
+          }
+          android {
+              namespace 'io.github.ammaralhadi.diag'
+              compileSdk 35
+              defaultConfig {
+                  applicationId 'io.github.ammaralhadi.diag'
+                  minSdk 26
+                  targetSdk 35
+                  versionCode 1
+                  versionName '1.0'
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          EOF
+
+          cat << 'EOF' > /tmp/diag_mod/src/main/AndroidManifest.xml
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" />
+          EOF
+
+          cat << 'EOF' > /tmp/diag_mod/src/main/java/io/github/ammaralhadi/diag/DiagLogger.java
+          package io.github.ammaralhadi.diag;
+
+          import android.app.Activity;
+          import android.app.AlertDialog;
+          import android.app.Application;
+          import android.content.ClipData;
+          import android.content.ClipboardManager;
+          import android.content.Context;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.GradientDrawable;
+          import android.os.Bundle;
+          import android.view.Gravity;
+          import android.view.MotionEvent;
+          import android.view.View;
+          import android.view.ViewGroup;
+          import android.widget.FrameLayout;
+          import android.widget.ScrollView;
+          import android.widget.TextView;
+          import android.widget.Toast;
+          import java.io.BufferedReader;
+          import java.io.File;
+          import java.io.FileWriter;
+          import java.io.InputStreamReader;
+          import java.text.SimpleDateFormat;
+          import java.util.Date;
+          import java.util.Locale;
+          import java.util.concurrent.atomic.AtomicBoolean;
+
+          public final class DiagLogger {
+              private static final String BTN_TAG = "samurai_diag_log_btn";
+              private static final AtomicBoolean INIT = new AtomicBoolean(false);
+              private static Application appRef;
+
+              public static void init(Application app) {
+                  if (app == null || !INIT.compareAndSet(false, true)) return;
+                  appRef = app;
+
+                  final Thread.UncaughtExceptionHandler prev = Thread.getDefaultUncaughtExceptionHandler();
+                  Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
+                      saveCrash(t, e);
+                      if (prev != null) prev.uncaughtException(t, e);
+                  });
+
+                  app.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
+                      @Override public void onActivityCreated(Activity a, Bundle b) {}
+                      @Override public void onActivityStarted(Activity a) {}
+                      @Override public void onActivityResumed(Activity a) { attachButton(a); }
+                      @Override public void onActivityPaused(Activity a) {}
+                      @Override public void onActivityStopped(Activity a) {}
+                      @Override public void onActivitySaveInstanceState(Activity a, Bundle b) {}
+                      @Override public void onActivityDestroyed(Activity a) {}
+                  });
+              }
+
+              private static void saveCrash(Thread t, Throwable e) {
+                  if (appRef == null) return;
+                  try {
+                      File f = new File(appRef.getFilesDir(), "samurai_crash.log");
+                      try (FileWriter fw = new FileWriter(f, true)) {
+                          fw.write("=== CRASH " + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date()) + " (" + t.getName() + ") ===\n");
+                          fw.write(android.util.Log.getStackTraceString(e) + "\n");
+                      }
+                  } catch (Throwable ignored) {}
+              }
+
+              private static void attachButton(final Activity activity) {
+                  try {
+                      View decor = activity.getWindow().getDecorView();
+                      if (!(decor instanceof ViewGroup)) return;
+                      ViewGroup root = (ViewGroup) decor;
+                      if (root.findViewWithTag(BTN_TAG) != null) return;
+
+                      float d = activity.getResources().getDisplayMetrics().density;
+                      TextView btn = new TextView(activity);
+                      btn.setTag(BTN_TAG);
+                      btn.setText("LOG");
+                      btn.setTextSize(11f);
+                      btn.setTypeface(Typeface.DEFAULT_BOLD);
+                      btn.setTextColor(Color.WHITE);
+                      btn.setGravity(Gravity.CENTER);
+                      GradientDrawable bg = new GradientDrawable();
+                      bg.setCornerRadius(16 * d);
+                      bg.setColor(0xDDDC2626);
+                      bg.setStroke((int) (1.5f * d), Color.WHITE);
+                      btn.setBackground(bg);
+                      btn.setElevation(20f);
+
+                      FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams((int) (46 * d), (int) (28 * d));
+                      lp.gravity = Gravity.TOP | Gravity.END;
+                      lp.topMargin = (int) (48 * d);
+                      lp.rightMargin = (int) (12 * d);
+
+                      final float[] drag = new float[4];
+                      btn.setOnTouchListener((v, ev) -> {
+                          switch (ev.getActionMasked()) {
+                              case MotionEvent.ACTION_DOWN:
+                                  drag[0] = v.getX() - ev.getRawX();
+                                  drag[1] = v.getY() - ev.getRawY();
+                                  drag[2] = ev.getRawX();
+                                  drag[3] = ev.getRawY();
+                                  return true;
+                              case MotionEvent.ACTION_MOVE:
+                                  v.setX(ev.getRawX() + drag[0]);
+                                  v.setY(ev.getRawY() + drag[1]);
+                                  return true;
+                              case MotionEvent.ACTION_UP:
+                                  double dist = Math.hypot(ev.getRawX() - drag[2], ev.getRawY() - drag[3]);
+                                  if (dist < 12 * d) showLogDialog(activity);
+                                  return true;
+                              default:
+                                  return false;
+                          }
+                      });
+                      root.addView(btn, lp);
+                  } catch (Throwable ignored) {}
+              }
+
+              private static String collectLogs(Context ctx) {
+                  StringBuilder sb = new StringBuilder();
+                  try {
+                      File crash = new File(ctx.getFilesDir(), "samurai_crash.log");
+                      if (crash.exists()) {
+                          sb.append("--- Saved Crash Log ---\n");
+                          try (BufferedReader br = new BufferedReader(new java.io.FileReader(crash))) {
+                              String line;
+                              while ((line = br.readLine()) != null) sb.append(line).append('\n');
+                          }
+                          sb.append('\n');
+                      }
+                  } catch (Throwable ignored) {}
+
+                  sb.append("--- Process Logcat ---\n");
+                  try {
+                      Process p = Runtime.getRuntime().exec(new String[]{"logcat", "-d", "-v", "time", "-t", "200"});
+                      try (BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                          String line;
+                          while ((line = br.readLine()) != null) sb.append(line).append('\n');
+                      }
+                  } catch (Throwable e) {
+                      sb.append("logcat error: ").append(e.getMessage()).append('\n');
+                  }
+                  return sb.toString();
+              }
+
+              private static void showLogDialog(final Activity activity) {
+                  final String logs = collectLogs(activity);
+                  TextView tv = new TextView(activity);
+                  tv.setText(logs);
+                  tv.setTextSize(10.5f);
+                  tv.setTypeface(Typeface.MONOSPACE);
+                  tv.setTextColor(0xFFE2E8F0);
+                  tv.setPadding(24, 16, 24, 16);
+
+                  ScrollView sv = new ScrollView(activity);
+                  sv.setBackgroundColor(0xFF0F172A);
+                  sv.addView(tv);
+
+                  new AlertDialog.Builder(activity)
+                      .setTitle("Samurai Diagnostic Log")
+                      .setView(sv)
+                      .setPositiveButton("Copy", (d, w) -> {
+                          ClipboardManager cm = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+                          if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("SamuraiLog", logs));
+                          Toast.makeText(activity, "Copied log", Toast.LENGTH_SHORT).show();
+                      })
+                      .setNegativeButton("Close", null)
+                      .show();
+              }
+          }
+          EOF
+
+          gradle -p /tmp/diag_mod assembleDebug --no-daemon
+
       - name: Download Apktool
         run: |
           wget -q https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -O apktool.jar
@@ -40,17 +267,20 @@ jobs:
             exit 1
           fi
 
-      - name: Decompile SAMURAI.apk
+      - name: Decompile DiagLogger & SAMURAI.apk
         run: |
+          java -jar apktool.jar d /tmp/diag_mod/build/outputs/apk/debug/diag_mod-debug.apk -o diag_decoded -f -r
           java -jar apktool.jar d target.apk -o target_decoded -f -r
 
-      - name: Redirect Server URLs in Smali & libstub.so
+      - name: Redirect Server URLs & Inject DiagLogger
         run: |
           python3 - << 'PY'
+          import re, shutil
           from pathlib import Path
 
           NEW_HOST = "https://ammaralhadi.pythonanywhere.com"
           target_dir = Path("target_decoded")
+          diag_dir = Path("diag_decoded")
 
           # 1. Replace plaintext URLs in smali
           smali_updated = 0
@@ -116,6 +346,53 @@ jobs:
                       count += 1
               so_path.write_bytes(data)
               print(f"[+] Patched {count} server URLs in {so_path}")
+
+          # 3. Copy DiagLogger smali into next smali_classesN
+          idx = 2
+          while (target_dir / f"smali_classes{idx}").exists():
+              idx += 1
+          dest_smali = target_dir / f"smali_classes{idx}"
+          dest_smali.mkdir(parents=True, exist_ok=True)
+          for smali_root in sorted(diag_dir.glob("smali*")):
+              src = smali_root / "io/github/ammaralhadi/diag"
+              if src.exists():
+                  dst = dest_smali / "io/github/ammaralhadi/diag"
+                  dst.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copytree(src, dst, dirs_exist_ok=True)
+                  print(f"[+] Copied DiagLogger -> {dst}")
+
+          # 4. Inject DiagLogger.init(Application) into AndroidApp.onCreate()
+          inject_call = "    invoke-static/range {p0 .. p0}, Lio/github/ammaralhadi/diag/DiagLogger;->init(Landroid/app/Application;)V\n"
+          candidates = list(target_dir.glob("smali*/delivery/samurai/android/AndroidApp.smali"))
+          if candidates:
+              app_smali = candidates[0]
+              content = app_smali.read_text(encoding="utf-8")
+              if "DiagLogger;->init(Landroid/app/Application;)V" not in content:
+                  pat_super = re.compile(
+                      r"(\.method\s+[^\n]*\bonCreate\(\)V\b.*?invoke-super\s+\{[^}]+\},\s+[^\n]+->onCreate\(\)V\s*\n)",
+                      re.DOTALL,
+                  )
+                  new_content, count = pat_super.subn(r"\1\n" + inject_call, content, count=1)
+                  if count == 0:
+                      pat_start = re.compile(
+                          r"(\.method\s+[^\n]*\bonCreate\(\)V\b[^\n]*\n(?:[ \t]*\.(?:locals|registers)\s+\d+\s*\n)(?:[ \t]*\.prologue\s*\n)?)",
+                          re.MULTILINE,
+                      )
+                      new_content, count = pat_start.subn(r"\1\n" + inject_call, content, count=1)
+                  if count == 0:
+                      super_match = re.search(r"^\.super\s+(\S+)", content, re.MULTILINE)
+                      if super_match:
+                          super_class = super_match.group(1)
+                          new_content = content + (
+                              "\n.method public onCreate()V\n"
+                              "    .locals 0\n\n"
+                              f"    invoke-super {{p0}}, {super_class}->onCreate()V\n\n"
+                              f"{inject_call}"
+                              "    return-void\n"
+                              ".end method\n"
+                          )
+                  app_smali.write_text(new_content, encoding="utf-8")
+                  print(f"[+] Injected DiagLogger.init into {app_smali}")
           PY
 
       - name: Rebuild, Zipalign & Sign SAMURAI.apk
