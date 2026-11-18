@@ -1,4 +1,4 @@
-name: Build & Patch SAMURAI.apk (No LSPosed)
+name: Fix SAMURAI.apk Server Connection
 
 on:
   push:
@@ -9,9 +9,16 @@ on:
         description: "Optional direct URL to SAMURAI.apk"
         required: false
         default: ""
+      license_server_url:
+        description: "License Server Base URL"
+        required: false
+        default: "https://ammaralhadi.pythonanywhere.com"
+
+env:
+  LICENSE_SERVER_URL: ${{ github.event.inputs.license_server_url || 'https://ammaralhadi.pythonanywhere.com' }}
 
 jobs:
-  build-and-patch:
+  fix-samurai-server:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -22,14 +29,6 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: Build Open-Source Mod APK
-        run: gradle assembleDebug --no-daemon
 
       - name: Download Apktool
         run: |
@@ -48,16 +47,31 @@ jobs:
             exit 1
           fi
 
-      - name: Decompile Mod & SAMURAI.apk
+      - name: Decompile SAMURAI.apk
         run: |
-          java -jar apktool.jar d app/build/outputs/apk/debug/app-debug.apk -o mod_decoded -f -r
           java -jar apktool.jar d target.apk -o target_decoded -f -r
 
-      - name: Inject NinjaMod & Redirect Server into SAMURAI.apk
+      - name: Connect SAMURAI.apk to License Server
         run: |
-          python3 scripts/patch_apk.py mod_decoded target_decoded target.apk
+          python3 - << 'PY'
+          import os
+          from pathlib import Path
 
-      - name: Rebuild, Zipalign & Sign Patched APK
+          new_url = os.environ["LICENSE_SERVER_URL"].rstrip("/")
+          updated = 0
+          for smali in Path("target_decoded").glob("smali*/**/*.smali"):
+              text = smali.read_text(encoding="utf-8", errors="ignore")
+              new_text = (
+                  text.replace("https://archerssmoothmograph.io", new_url)
+                  .replace("http://archerssmoothmograph.io", new_url)
+              )
+              if new_text != text:
+                  smali.write_text(new_text, encoding="utf-8")
+                  updated += 1
+          print(f"[+] Updated server URL in {updated} smali files -> {new_url}")
+          PY
+
+      - name: Rebuild, Zipalign & Sign SAMURAI.apk
         run: |
           java -jar apktool.jar b target_decoded -o raw_unsigned.apk
           python3 - << 'PY'
@@ -73,7 +87,7 @@ jobs:
           PY
           BUILD_TOOLS_DIR=$(ls -d ${ANDROID_HOME}/build-tools/* | sort -V | tail -n 1)
           "${BUILD_TOOLS_DIR}/zipalign" -p -f 4 unsigned.apk aligned.apk
-          keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=NinjaOpenSource,O=Android,C=US"
+          keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=SamuraiServerFix,O=Android,C=US"
           "${BUILD_TOOLS_DIR}/apksigner" sign \
             --ks debug.keystore \
             --ks-pass pass:android \
@@ -81,12 +95,12 @@ jobs:
             --v1-signing-enabled true \
             --v2-signing-enabled true \
             --v3-signing-enabled true \
-            --out samurai-open-source-patched.apk \
+            --out samurai-fixed.apk \
             aligned.apk
-          "${BUILD_TOOLS_DIR}/apksigner" verify --verbose samurai-open-source-patched.apk
+          "${BUILD_TOOLS_DIR}/apksigner" verify --verbose samurai-fixed.apk
 
-      - name: Upload Patched APK
+      - name: Upload Fixed SAMURAI.apk
         uses: actions/upload-artifact@v4
         with:
-          name: samurai-open-source-patched
-          path: samurai-open-source-patched.apk
+          name: samurai-fixed
+          path: samurai-fixed.apk
